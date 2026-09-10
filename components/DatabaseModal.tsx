@@ -4,7 +4,8 @@ import {
   testSupabaseConnection, 
   pullTransactionsFromSupabase, 
   pushTransactionsToSupabase, 
-  generatePostgresDDL 
+  generatePostgresDDL,
+  createShareableSyncLink
 } from '../services/supabaseService';
 
 interface DatabaseModalProps {
@@ -214,6 +215,33 @@ const DatabaseModal: React.FC<DatabaseModalProps> = ({
       onShowToast(res.message, 'success');
     } else {
       onShowToast(res.message, 'error');
+    }
+  };
+
+  // 5b. Bagikan Tautan Sinkronisasi Cepat (Share Sync Link)
+  const handleCopyShareableLink = () => {
+    if (!localSupabase.url || !localSupabase.anonKey) {
+      onShowToast('Isi Project URL dan Anon Key terlebih dahulu.', 'error');
+      return;
+    }
+    const link = createShareableSyncLink(localSupabase);
+    navigator.clipboard.writeText(link);
+    onShowToast('Tautan Sinkronisasi Cepat berhasil disalin! Buka link ini di HP Anda atau kirim via WhatsApp.', 'success');
+  };
+
+  // 5c. Simpan dan Langsung Dorong Data ke Cloud
+  const handleSaveAndSyncSupabase = async () => {
+    onUpdateSupabaseConfig(localSupabase);
+    setIsSyncing(true);
+    const res = await pushTransactionsToSupabase(localSupabase, transactions);
+    setIsSyncing(false);
+    if (res.success) {
+      const updatedConfig = { ...localSupabase, lastSyncedAt: new Date().toISOString() };
+      setLocalSupabase(updatedConfig);
+      onUpdateSupabaseConfig(updatedConfig);
+      onShowToast('Konfigurasi disimpan & seluruh data BKU berhasil diunggah ke Cloud!', 'success');
+    } else {
+      onShowToast(`Konfigurasi tersimpan. Catatan: ${res.message}`, 'info');
     }
   };
 
@@ -540,13 +568,37 @@ const DatabaseModal: React.FC<DatabaseModalProps> = ({
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      onUpdateSupabaseConfig(localSupabase);
-                      onShowToast('Konfigurasi Supabase berhasil disimpan!', 'success');
-                    }}
-                    className="px-4 py-2 bg-gradient-to-r from-cyan-600 to-teal-500 hover:from-cyan-500 hover:to-teal-400 text-white rounded-xl font-bold transition-all shadow-md shadow-cyan-950/50 cursor-pointer"
+                    onClick={handleSaveAndSyncSupabase}
+                    disabled={isSyncing}
+                    className="px-4 py-2 bg-gradient-to-r from-cyan-600 to-teal-500 hover:from-cyan-500 hover:to-teal-400 text-white rounded-xl font-bold transition-all shadow-md shadow-cyan-950/50 cursor-pointer disabled:opacity-50"
                   >
-                    Simpan Konfigurasi
+                    {isSyncing ? 'Menyimpan & Mengunggah...' : 'Simpan & Unggah Data ke Cloud'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Banner Bagikan Tautan Sinkronisasi ke HP / Pengguna Lain */}
+              <div className="bg-gradient-to-r from-cyan-950/60 via-[#0B1524] to-emerald-950/40 p-4 rounded-xl border border-cyan-500/30 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse"></span>
+                    <h5 className="font-bold text-white text-xs">Hubungkan HP / Perangkat Lain Secara Otomatis</h5>
+                  </div>
+                  <span className="text-[10px] bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-semibold px-2 py-0.5 rounded-lg">
+                    1-Klik Auto Sambung
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-300 leading-relaxed">
+                  Pengguna di HP atau laptop lain <strong>tidak perlu mengetik Project URL dan Anon Key</strong> secara manual. Cukup salin tautan khusus di bawah lalu buka di browser HP Anda:
+                </p>
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={handleCopyShareableLink}
+                    className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg shadow-emerald-950/50 cursor-pointer text-xs"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                    Salin Tautan Sinkronisasi Cepat (Kirim via WhatsApp ke HP)
                   </button>
                 </div>
               </div>

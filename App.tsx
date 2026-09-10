@@ -23,7 +23,13 @@ import DatabaseModal from './components/DatabaseModal'; // Import Database Modal
 import BudgetModal from './components/BudgetModal'; // Import Budget Modal
 import TreasurerAuthModal from './components/TreasurerAuthModal'; // Import Modal Otentikasi Bendahara
 import Toast from './components/Toast'; // Import Toast
-import { pullTransactionsFromSupabase, pushTransactionsToSupabase } from './services/supabaseService';
+import { 
+  pullTransactionsFromSupabase, 
+  pushTransactionsToSupabase, 
+  deleteTransactionFromSupabase,
+  extractSyncConfigFromUrl,
+  createShareableSyncLink
+} from './services/supabaseService';
 
 const STORAGE_KEY = 'arkas_lite_data';
 const SETTINGS_KEY = 'arkas_school_settings';
@@ -76,9 +82,16 @@ const App: React.FC = () => {
     }
   });
 
-  // State Konfigurasi Supabase REST API (Mendukung Environment Variable Vercel/Vite & LocalStorage)
+  // State Konfigurasi Supabase REST API (Mendukung Tautan Sinkronisasi Cepat, Env Vercel & LocalStorage)
   const [supabaseConfig, setSupabaseConfig] = useState<SupabaseConfig>(() => {
     try {
+      // 1. Cek apakah pengguna membuka aplikasi lewat tautan sinkronisasi (#sync=...)
+      const fromUrl = extractSyncConfigFromUrl();
+      if (fromUrl) {
+        localStorage.setItem(SUPABASE_KEY, JSON.stringify(fromUrl));
+        return fromUrl;
+      }
+      // 2. Cek Environment Variable Vercel
       const envUrl = (import.meta as any).env?.VITE_SUPABASE_URL || '';
       const envKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || '';
       const saved = localStorage.getItem(SUPABASE_KEY);
@@ -253,7 +266,7 @@ const App: React.FC = () => {
                 (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
               );
             });
-            showToast(`Sinkronisasi Cloud Aktif: ${res.data.length} transaksi dimuat.`, 'info');
+            showToast(`Sinkronisasi Cloud Aktif: ${res.data.length} transaksi termutakhir dimuat.`, 'info');
           }
         })
         .catch(err => {
@@ -263,6 +276,38 @@ const App: React.FC = () => {
           setIsCloudSyncing(false);
         });
     }
+  }, [supabaseConfig.url, supabaseConfig.anonKey]);
+
+  // Sinkronisasi otomatis saat beralih tab/perangkat aktif (Focus) atau berkala
+  useEffect(() => {
+    if (!supabaseConfig.url || !supabaseConfig.anonKey) return;
+
+    const pullBackground = async () => {
+      if (document.visibilityState !== 'visible') return;
+      try {
+        const res = await pullTransactionsFromSupabase(supabaseConfig);
+        if (res.success && res.data) {
+          setTransactions(prev => {
+            const map = new Map<string, Transaction>();
+            prev.forEach(t => map.set(t.id, t));
+            res.data!.forEach(t => map.set(t.id, t));
+            return Array.from(map.values()).sort(
+              (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+            );
+          });
+        }
+      } catch (e) {
+        console.warn('Background sync check failed:', e);
+      }
+    };
+
+    window.addEventListener('focus', pullBackground);
+    const interval = setInterval(pullBackground, 15000); // Polling otomatis tiap 15 detik
+
+    return () => {
+      window.removeEventListener('focus', pullBackground);
+      clearInterval(interval);
+    };
   }, [supabaseConfig.url, supabaseConfig.anonKey]);
 
   // Tombol Sinkronisasi Cepat Antar-Perangkat
@@ -356,7 +401,9 @@ const App: React.FC = () => {
     }
     const updated = transactions.filter(t => t.id !== id);
     setTransactions(updated);
-    syncTransactionsToCloud(updated);
+    if (supabaseConfig.url && supabaseConfig.anonKey) {
+      deleteTransactionFromSupabase(supabaseConfig, id);
+    }
     if (editingTransaction?.id === id) setEditingTransaction(null);
     showToast('Transaksi berhasil dihapus dari BKU', 'success');
   };
