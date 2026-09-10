@@ -27,7 +27,24 @@ Aplikasi ini sudah dilengkapi konfigurasi resmi `vercel.json` untuk Vite SPA.
 
 ---
 
+## Sinkronisasi Otomatis Antar-Perangkat (Multi-Device Live Sync)
+
+Secara bawaan, ARKAS Lite menyimpan data kas di penyimpanan lokal browser (*Local Storage*) untuk kecepatan dan privasi.
+
+Untuk mengaktifkan sinkronisasi data otomatis antar-HP, Laptop, dan Tablet secara *real-time* (gratis):
+1. Buat akun dan proyek gratis di [supabase.com](https://supabase.com).
+2. Di aplikasi ARKAS Lite, buka menu **Database** &rarr; tab **Skema SQL DDL**, salin kodenya, dan jalankan di **SQL Editor** Supabase.
+3. Masukkan **Project URL** dan **Anon Key** pada tab **Cloud (Supabase REST)**.
+4. **Tip Vercel**: Agar semua perangkat yang membuka tautan Vercel otomatis tersambung tanpa perlu input konfigurasi, tambahkan dua *Environment Variables* di dashboard Vercel (**Settings** &rarr; **Environment Variables**):
+   - `VITE_SUPABASE_URL`: (URL proyek Supabase Anda)
+   - `VITE_SUPABASE_ANON_KEY`: (Anon/Public key Supabase Anda)
+
+Setelah diatur, setiap penambahan atau perubahan transaksi di laptop akan langsung tersinkronkan otomatis ke HP dan perangkat lainnya!
+
+---
+
 ## Menjalankan Secara Lokal (Offline)
+
 1. Install dependensi:
    ```bash
    npm install

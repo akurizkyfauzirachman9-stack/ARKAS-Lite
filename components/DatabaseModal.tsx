@@ -41,10 +41,12 @@ const DatabaseModal: React.FC<DatabaseModalProps> = ({
   // Local state for supabase config
   const [localSupabase, setLocalSupabase] = useState<SupabaseConfig>(supabaseConfig);
   
-  // Loading states
+  // Loading & Action states
   const [isTesting, setIsTesting] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [copiedSQL, setCopiedSQL] = useState(false);
+  const [showPasteBox, setShowPasteBox] = useState(false);
+  const [pasteText, setPasteText] = useState('');
 
   if (!isOpen) return null;
 
@@ -70,12 +72,86 @@ const DatabaseModal: React.FC<DatabaseModalProps> = ({
     onShowToast('File cadangan database berhasil diunduh!', 'success');
   };
 
+  // Salin Kode Data ke Clipboard untuk dikirim via WA / Catatan ke HP
+  const handleCopyJSONToClipboard = () => {
+    const backupPayload = {
+      version: '2.0',
+      exportedAt: new Date().toISOString(),
+      schoolSettings: localSettings,
+      transactionsCount: transactions.length,
+      transactions,
+    };
+    const dataStr = JSON.stringify(backupPayload);
+    navigator.clipboard.writeText(dataStr).then(() => {
+      onShowToast('Kode data berhasil disalin! Silakan kirimkan (paste) via WhatsApp atau pesan ke HP Anda.', 'success');
+    }).catch(() => {
+      onShowToast('Gagal menyalin teks secara otomatis. Silakan gunakan tombol unduh file.', 'error');
+    });
+  };
+
+  // Helper pemrosesan impor data (baik dari file maupun teks paste)
+  const processImportData = (parsedData: any) => {
+    let incomingTransactions: Transaction[] = [];
+
+    if (Array.isArray(parsedData)) {
+      incomingTransactions = parsedData;
+    } else if (parsedData && Array.isArray(parsedData.transactions)) {
+      incomingTransactions = parsedData.transactions;
+      if (parsedData.schoolSettings) {
+        setLocalSettings(parsedData.schoolSettings);
+        onUpdateSchoolSettings(parsedData.schoolSettings);
+      }
+    } else {
+      throw new Error('Format file tidak valid. Format harus berupa array transaksi atau objek backup ARKAS.');
+    }
+
+    // Mekanisme ON CONFLICT (id) DO UPDATE & unique_bku_entry (date, description, amount)
+    const existingMap = new Map<string, Transaction>();
+    transactions.forEach(t => existingMap.set(t.id, t));
+
+    let updatedCount = 0;
+    let insertedCount = 0;
+
+    incomingTransactions.forEach(item => {
+      if (!item.id) item.id = Date.now().toString() + Math.random().toString(36).substring(2, 7);
+      
+      if (existingMap.has(item.id)) {
+        existingMap.set(item.id, item);
+        updatedCount++;
+      } else {
+        // Check unique_bku_entry constraint (date, description, amount)
+        const duplicate = Array.from(existingMap.values()).find(
+          existing => existing.date === item.date && 
+                      existing.description.trim().toLowerCase() === item.description.trim().toLowerCase() && 
+                      existing.amount === item.amount
+        );
+
+        if (duplicate) {
+          // Merge/update duplicate
+          existingMap.set(duplicate.id, { ...duplicate, ...item, id: duplicate.id });
+          updatedCount++;
+        } else {
+          existingMap.set(item.id, item);
+          insertedCount++;
+        }
+      }
+    });
+
+    const mergedList = Array.from(existingMap.values()).sort(
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
+
+    onImport(mergedList);
+    onShowToast(`Pemulihan berhasil: ${insertedCount} baru, ${updatedCount} diperbarui (ON CONFLICT).`, 'success');
+    onClose();
+  };
+
   // 2. Trigger Input File
   const handleImportClick = () => {
     fileInputRef.current?.click();
   };
 
-  // 3. Masukan Database (Upload & Parse JSON with ON CONFLICT / deduplication)
+  // 3. Masukan Database dari File
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setErrorMsg(null);
     const file = e.target.files?.[0];
@@ -86,60 +162,7 @@ const DatabaseModal: React.FC<DatabaseModalProps> = ({
       try {
         const json = event.target?.result as string;
         const parsedData = JSON.parse(json);
-
-        let incomingTransactions: Transaction[] = [];
-
-        if (Array.isArray(parsedData)) {
-          incomingTransactions = parsedData;
-        } else if (parsedData && Array.isArray(parsedData.transactions)) {
-          incomingTransactions = parsedData.transactions;
-          if (parsedData.schoolSettings) {
-            setLocalSettings(parsedData.schoolSettings);
-            onUpdateSchoolSettings(parsedData.schoolSettings);
-          }
-        } else {
-          throw new Error('Format file tidak valid. Format harus berupa array transaksi atau objek backup.');
-        }
-
-        // Mekanisme ON CONFLICT (id) DO UPDATE & unique_bku_entry (date, description, amount)
-        const existingMap = new Map<string, Transaction>();
-        transactions.forEach(t => existingMap.set(t.id, t));
-
-        let updatedCount = 0;
-        let insertedCount = 0;
-
-        incomingTransactions.forEach(item => {
-          if (!item.id) item.id = Date.now().toString() + Math.random().toString(36).substring(2, 7);
-          
-          if (existingMap.has(item.id)) {
-            existingMap.set(item.id, item);
-            updatedCount++;
-          } else {
-            // Check unique_bku_entry constraint (date, description, amount)
-            const duplicate = Array.from(existingMap.values()).find(
-              existing => existing.date === item.date && 
-                          existing.description.trim().toLowerCase() === item.description.trim().toLowerCase() && 
-                          existing.amount === item.amount
-            );
-
-            if (duplicate) {
-              // Merge/update duplicate
-              existingMap.set(duplicate.id, { ...duplicate, ...item, id: duplicate.id });
-              updatedCount++;
-            } else {
-              existingMap.set(item.id, item);
-              insertedCount++;
-            }
-          }
-        });
-
-        const mergedList = Array.from(existingMap.values()).sort(
-          (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
-        );
-
-        onImport(mergedList);
-        onShowToast(`Pemulihan berhasil: ${insertedCount} baru, ${updatedCount} disinkronkan (ON CONFLICT).`, 'success');
-        onClose();
+        processImportData(parsedData);
       } catch (err: any) {
         console.error("Gagal membaca file:", err);
         setErrorMsg(err.message || "File rusak atau format tidak sesuai.");
@@ -148,6 +171,24 @@ const DatabaseModal: React.FC<DatabaseModalProps> = ({
     reader.readAsText(file);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
+
+  // 3b. Masukan Database dari Teks Paste
+  const handleApplyPaste = () => {
+    setErrorMsg(null);
+    try {
+      if (!pasteText.trim()) {
+        setErrorMsg('Silakan tempelkan teks kode data terlebih dahulu.');
+        return;
+      }
+      const parsedData = JSON.parse(pasteText.trim());
+      processImportData(parsedData);
+      setShowPasteBox(false);
+      setPasteText('');
+    } catch (err: any) {
+      setErrorMsg('Format teks yang Anda tempel bukan kode JSON yang valid: ' + (err.message || ''));
+    }
+  };
+
 
   // 4. Test Supabase Connection
   const handleTestConnection = async () => {
@@ -344,6 +385,71 @@ const DatabaseModal: React.FC<DatabaseModalProps> = ({
                 </div>
               </div>
 
+              {/* Opsi Kirim Cepat Antar-Perangkat via Teks / WhatsApp */}
+              <div className="bg-[#101621] p-4 rounded-xl border border-slate-800 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <svg className="w-4 h-4 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>
+                      Pindah Data ke HP / Perangkat Lain (Instan Tanpa File)
+                    </h4>
+                    <p className="text-[11px] text-slate-400 mt-0.5">
+                      Salin seluruh data menjadi teks, kirim ke HP via WhatsApp/catatan, lalu tempel di HP Anda.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleCopyJSONToClipboard}
+                      className="px-3 py-1.5 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-[#00E6A7] rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
+                      title="Salin seluruh data ke papan klip untuk dikirimkan"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                      Salin Data
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowPasteBox(!showPasteBox)}
+                      className="px-3 py-1.5 bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/30 text-cyan-300 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/></svg>
+                      {showPasteBox ? 'Tutup Tempel' : 'Tempel Data di HP'}
+                    </button>
+                  </div>
+                </div>
+
+                {showPasteBox && (
+                  <div className="pt-2 border-t border-slate-800 space-y-2">
+                    <label className="text-[11px] font-semibold text-slate-300 block">
+                      Tempelkan teks kode cadangan yang Anda terima di sini:
+                    </label>
+                    <textarea
+                      value={pasteText}
+                      onChange={e => setPasteText(e.target.value)}
+                      placeholder='Tempel (paste) kode JSON di sini...'
+                      rows={3}
+                      className="w-full px-3 py-2 bg-[#0B111B] border border-slate-700 rounded-xl text-xs font-mono text-cyan-200 placeholder-slate-600 focus:border-cyan-400 focus:outline-none"
+                    />
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => { setShowPasteBox(false); setPasteText(''); }}
+                        className="px-3 py-1.5 text-xs text-slate-400 hover:text-white cursor-pointer"
+                      >
+                        Batal
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleApplyPaste}
+                        className="px-4 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl text-xs font-bold shadow transition-all cursor-pointer"
+                      >
+                        Terapkan Data ke HP Ini
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {errorMsg && (
                 <div className="p-3 bg-rose-950/40 text-rose-300 text-xs rounded-xl border border-rose-500/30 text-center">
                   ⚠️ {errorMsg}
@@ -355,6 +461,30 @@ const DatabaseModal: React.FC<DatabaseModalProps> = ({
           {/* TAB 2: CLOUD SUPABASE REST */}
           {activeTab === 'cloud' && (
             <div className="space-y-4 text-xs">
+              {/* Panduan Mengapa Data di HP Belum Masuk */}
+              <div className="bg-blue-950/30 p-4 rounded-xl border border-blue-500/30 text-slate-300 space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-blue-400"></span>
+                  <h4 className="font-bold text-sm text-blue-200">
+                    Mengapa Data di HP Belum Otomatis Masuk?
+                  </h4>
+                </div>
+                <p className="text-slate-300 leading-relaxed text-xs">
+                  Vercel menyediakan hosting <strong>website & tampilan</strong> di internet. Data kas BKU Anda secara default disimpan di <strong>penyimpanan lokal browser perangkat</strong> Anda.
+                </p>
+                <div className="bg-[#0B111B]/80 p-3 rounded-lg border border-blue-500/20 text-xs space-y-1.5">
+                  <p className="font-semibold text-cyan-300">Cara Mengaktifkan Sinkronisasi Otomatis Antar-HP/Laptop (Gratis):</p>
+                  <ol className="list-decimal list-inside space-y-1 text-slate-300 leading-relaxed">
+                    <li>Buat akun dan project gratis di <a href="https://supabase.com" target="_blank" rel="noreferrer" className="text-cyan-400 underline font-semibold">supabase.com</a>.</li>
+                    <li>Buka tab <strong>Skema SQL DDL</strong> di modal ini, salin kodenya, lalu jalankan di <em>SQL Editor</em> Supabase.</li>
+                    <li>Masukkan <strong>Project URL</strong> dan <strong>Anon Key</strong> pada formulir di bawah (atau simpan di Vercel Settings &gt; Environment Variables sebagai <code className="bg-black text-cyan-300 px-1 py-0.5 rounded font-mono">VITE_SUPABASE_URL</code> dan <code className="bg-black text-cyan-300 px-1 py-0.5 rounded font-mono">VITE_SUPABASE_ANON_KEY</code>).</li>
+                  </ol>
+                  <p className="text-[11px] text-emerald-400 font-medium pt-1">
+                    ✓ Setelah terhubung, setiap transaksi yang diinput di laptop akan langsung muncul otomatis di HP secara seketika!
+                  </p>
+                </div>
+              </div>
+
               <div className="bg-cyan-950/20 p-4 rounded-xl border border-cyan-500/20 text-slate-300">
                 <h4 className="font-bold text-sm mb-1 flex items-center gap-1.5 text-cyan-300">
                   <svg className="w-4 h-4 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>

@@ -23,6 +23,7 @@ import DatabaseModal from './components/DatabaseModal'; // Import Database Modal
 import BudgetModal from './components/BudgetModal'; // Import Budget Modal
 import TreasurerAuthModal from './components/TreasurerAuthModal'; // Import Modal Otentikasi Bendahara
 import Toast from './components/Toast'; // Import Toast
+import { pullTransactionsFromSupabase, pushTransactionsToSupabase } from './services/supabaseService';
 
 const STORAGE_KEY = 'arkas_lite_data';
 const SETTINGS_KEY = 'arkas_school_settings';
@@ -75,15 +76,33 @@ const App: React.FC = () => {
     }
   });
 
-  // State Konfigurasi Supabase REST API
+  // State Konfigurasi Supabase REST API (Mendukung Environment Variable Vercel/Vite & LocalStorage)
   const [supabaseConfig, setSupabaseConfig] = useState<SupabaseConfig>(() => {
     try {
+      const envUrl = (import.meta as any).env?.VITE_SUPABASE_URL || '';
+      const envKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || '';
       const saved = localStorage.getItem(SUPABASE_KEY);
-      return saved ? JSON.parse(saved) : DEFAULT_SUPABASE_CONFIG;
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return {
+          ...DEFAULT_SUPABASE_CONFIG,
+          ...parsed,
+          url: parsed.url || envUrl,
+          anonKey: parsed.anonKey || envKey,
+        };
+      }
+      return {
+        ...DEFAULT_SUPABASE_CONFIG,
+        url: envUrl,
+        anonKey: envKey,
+      };
     } catch (e) {
       return DEFAULT_SUPABASE_CONFIG;
     }
   });
+
+  const [isCloudSyncing, setIsCloudSyncing] = useState(false);
+  const isCloudConfigured = Boolean(supabaseConfig.url && supabaseConfig.anonKey);
 
   // State Role-Based Access Control (RBAC)
   const [userRole, setUserRole] = useState<UserRole>(() => {
@@ -203,6 +222,81 @@ const App: React.FC = () => {
     localStorage.setItem(PHASE_KEY, selectedPhase);
   }, [selectedPhase]);
 
+  // Helper sinkronisasi latar belakang ke Supabase Cloud
+  const syncTransactionsToCloud = async (dataToSync: Transaction[]) => {
+    if (!supabaseConfig.url || !supabaseConfig.anonKey) return;
+    try {
+      setIsCloudSyncing(true);
+      await pushTransactionsToSupabase(supabaseConfig, dataToSync);
+      const updatedConfig = { ...supabaseConfig, lastSyncedAt: new Date().toISOString() };
+      setSupabaseConfig(updatedConfig);
+      localStorage.setItem(SUPABASE_KEY, JSON.stringify(updatedConfig));
+    } catch (e) {
+      console.warn('Gagal sinkronisasi otomatis ke cloud:', e);
+    } finally {
+      setIsCloudSyncing(false);
+    }
+  };
+
+  // Auto-Pull data transaksi dari Cloud saat aplikasi pertama kali dibuka
+  useEffect(() => {
+    if (supabaseConfig.url && supabaseConfig.anonKey) {
+      setIsCloudSyncing(true);
+      pullTransactionsFromSupabase(supabaseConfig)
+        .then(res => {
+          if (res.success && res.data && res.data.length > 0) {
+            setTransactions(prev => {
+              const map = new Map<string, Transaction>();
+              prev.forEach(t => map.set(t.id, t));
+              res.data!.forEach(t => map.set(t.id, t));
+              return Array.from(map.values()).sort(
+                (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+              );
+            });
+            showToast(`Sinkronisasi Cloud Aktif: ${res.data.length} transaksi dimuat.`, 'info');
+          }
+        })
+        .catch(err => {
+          console.warn('Auto-pull error:', err);
+        })
+        .finally(() => {
+          setIsCloudSyncing(false);
+        });
+    }
+  }, [supabaseConfig.url, supabaseConfig.anonKey]);
+
+  // Tombol Sinkronisasi Cepat Antar-Perangkat
+  const handleTriggerCloudSync = async () => {
+    if (!isCloudConfigured) {
+      setIsDatabaseModalOpen(true);
+      return;
+    }
+    setIsCloudSyncing(true);
+    try {
+      const pullRes = await pullTransactionsFromSupabase(supabaseConfig);
+      if (pullRes.success && pullRes.data) {
+        const map = new Map<string, Transaction>();
+        transactions.forEach(t => map.set(t.id, t));
+        pullRes.data.forEach(t => map.set(t.id, t));
+        const merged = Array.from(map.values()).sort(
+          (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+        );
+        setTransactions(merged);
+        await pushTransactionsToSupabase(supabaseConfig, merged);
+        const updatedConfig = { ...supabaseConfig, lastSyncedAt: new Date().toISOString() };
+        setSupabaseConfig(updatedConfig);
+        localStorage.setItem(SUPABASE_KEY, JSON.stringify(updatedConfig));
+        showToast(`Sinkronisasi berhasil! ${merged.length} transaksi termutakhirkan.`, 'success');
+      } else {
+        showToast(pullRes.message || 'Gagal sinkronisasi data.', 'error');
+      }
+    } catch (e: any) {
+      showToast(`Gagal sinkronisasi: ${e?.message || 'Cek koneksi internet'}`, 'error');
+    } finally {
+      setIsCloudSyncing(false);
+    }
+  };
+
   // Sorted Transactions (Selalu urutkan berdasarkan tanggal terbaru)
   const sortedTransactions = useMemo(() => {
     return [...transactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -214,7 +308,9 @@ const App: React.FC = () => {
       ...tx,
       id: newId,
     };
-    setTransactions(prev => [transaction, ...prev]);
+    const updated = [transaction, ...transactions];
+    setTransactions(updated);
+    syncTransactionsToCloud(updated);
     showToast('Transaksi berhasil disimpan & dicadangkan otomatis!', 'success');
   };
 
@@ -246,7 +342,9 @@ const App: React.FC = () => {
       showToast('Akses Ditolak: Hanya Bendahara BOSP yang berhak memperbarui transaksi.', 'error');
       return;
     }
-    setTransactions(transactions.map(t => t.id === updatedTx.id ? updatedTx : t));
+    const updated = transactions.map(t => t.id === updatedTx.id ? updatedTx : t);
+    setTransactions(updated);
+    syncTransactionsToCloud(updated);
     setEditingTransaction(null);
     showToast('Perubahan berhasil disimpan', 'info');
   };
@@ -256,10 +354,13 @@ const App: React.FC = () => {
       showToast('Akses Ditolak: Hanya Bendahara BOSP yang berhak menghapus transaksi.', 'error');
       return;
     }
-    setTransactions(prev => prev.filter(t => t.id !== id));
+    const updated = transactions.filter(t => t.id !== id);
+    setTransactions(updated);
+    syncTransactionsToCloud(updated);
     if (editingTransaction?.id === id) setEditingTransaction(null);
     showToast('Transaksi berhasil dihapus dari BKU', 'success');
   };
+
 
   // Handler for Reset All Data
   const handleResetData = () => {
@@ -422,7 +523,31 @@ const App: React.FC = () => {
                     Tersimpan
                   </span>
                 )}
+                {isCloudConfigured ? (
+                  <button
+                    type="button"
+                    onClick={handleTriggerCloudSync}
+                    disabled={isCloudSyncing}
+                    className="text-[10px] bg-[#101621] hover:bg-[#151C28] px-2.5 py-0.5 rounded-full text-cyan-300 border border-cyan-500/40 flex items-center gap-1 font-medium cursor-pointer transition-all"
+                    title="Cloud Sync Aktif: Data otomatis disinkronkan ke seluruh perangkat. Klik untuk sinkron sekarang."
+                  >
+                    <span className={`w-1.5 h-1.5 rounded-full ${isCloudSyncing ? 'bg-amber-400 animate-pulse' : 'bg-cyan-400'}`}></span>
+                    <span>{isCloudSyncing ? 'Sinkron...' : 'Cloud Aktif'}</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setIsDatabaseModalOpen(true)}
+                    className="text-[10px] bg-[#101621] hover:bg-slate-800 px-2 py-0.5 rounded-full text-slate-400 hover:text-cyan-300 border border-slate-700/80 flex items-center gap-1 cursor-pointer transition-all"
+                    title="Mode Lokal/Offline. Klik untuk menyambungkan Cloud Supabase gratis agar data otomatis sinkron ke HP/perangkat lain."
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-slate-500"></span>
+                    <span className="hidden sm:inline">Lokal</span>
+                    <span className="text-cyan-400 font-bold">&bull; Auto-Sync?</span>
+                  </button>
+                )}
               </div>
+
             </div>
           </div>
 
