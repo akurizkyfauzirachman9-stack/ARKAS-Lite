@@ -177,9 +177,18 @@ export const generatePostgresDDL = (settings: SchoolSettings): string => {
 -- Satuan Pendidikan: ${settings.schoolName} (NPSN: ${settings.npsn})
 -- ============================================================================
 
--- 1. ENUM TIPE TRANSAKSI & ROLE
-CREATE TYPE tx_type AS ENUM ('income', 'expense');
-CREATE TYPE user_role AS ENUM ('treasurer', 'headmaster', 'committee');
+-- 1. ENUM TIPE TRANSAKSI & ROLE (Idempotent: Aman dijalankan berulang kali)
+DO $$ BEGIN
+    CREATE TYPE tx_type AS ENUM ('income', 'expense');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+DO $$ BEGIN
+    CREATE TYPE user_role AS ENUM ('treasurer', 'headmaster', 'committee');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
 -- 2. TABEL PROFIL SATUAN PENDIDIKAN & PEJABAT BOSP
 CREATE TABLE IF NOT EXISTS settings (
@@ -216,37 +225,30 @@ CREATE TABLE IF NOT EXISTS transactions (
     tax_pph21 NUMERIC(15, 2) DEFAULT 0.00,
     notes TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW(),
-
-    -- Integritas BKU: Melindungi dari kesalahan entri ganda
-    CONSTRAINT unique_bku_entry UNIQUE (date, description, amount)
+    updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Indeks Performa untuk Kueri Tanggal & Kategori
 CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions (date DESC);
 CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions (category);
 
--- 4. KEBIJAKAN ROW LEVEL SECURITY (RLS) & RBAC
+-- 4. KEBIJAKAN ROW LEVEL SECURITY (RLS)
 ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE settings ENABLE ROW LEVEL SECURITY;
 
--- Hak Akses Baca: Berlaku untuk semua pihak (Bendahara, Kepala Sekolah, Komite)
-CREATE POLICY "Semua pihak berwenang dapat membaca BKU"
-ON transactions FOR SELECT
-TO authenticated
-USING (true);
-
--- Hak Akses Tulis: Khusus Bendahara BOSP (CRUD Penuh)
-CREATE POLICY "Hanya Bendahara yang dapat menginput dan mengubah BKU"
+-- Kebijakan Akses Baca & Tulis untuk REST API (anon dan authenticated)
+DROP POLICY IF EXISTS "Akses Sinkronisasi BKU" ON transactions;
+CREATE POLICY "Akses Sinkronisasi BKU"
 ON transactions FOR ALL
-TO authenticated
-USING (
-  auth.jwt() ->> 'role' = 'treasurer' OR 
-  (auth.jwt() -> 'app_metadata' ->> 'user_role') = 'treasurer'
-)
-WITH CHECK (
-  auth.jwt() ->> 'role' = 'treasurer' OR 
-  (auth.jwt() -> 'app_metadata' ->> 'user_role') = 'treasurer'
-);
+TO anon, authenticated
+USING (true)
+WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Akses Sinkronisasi Settings" ON settings;
+CREATE POLICY "Akses Sinkronisasi Settings"
+ON settings FOR ALL
+TO anon, authenticated
+USING (true)
+WITH CHECK (true);
 `;
 };
