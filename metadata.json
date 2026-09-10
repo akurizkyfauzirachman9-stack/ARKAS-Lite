@@ -1,0 +1,8 @@
+{
+  "name": "ARKAS Lite - Keuangan Sekolah",
+  "description": "Aplikasi manajemen keuangan sekolah sederhana dengan standar kategori BOS dan laporan real-time.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
