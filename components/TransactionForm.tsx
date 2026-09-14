@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Transaction, TransactionType, INCOME_CATEGORIES, EXPENSE_CATEGORIES, UserRole } from '../types';
+import { parseNominal, formatRupiah } from '../utils';
 
 interface TransactionFormProps {
   onAddTransaction: (transaction: Omit<Transaction, 'id'>) => void;
@@ -127,15 +128,16 @@ const TransactionForm: React.FC<TransactionFormProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!amount || !description) return;
+    const parsedAmount = parseNominal(amount);
+    if (parsedAmount <= 0 || !description.trim()) return;
 
     if (editingTransaction) {
       onUpdateTransaction({
         ...editingTransaction,
         date,
         recipient: recipient.trim(),
-        description,
-        amount: parseFloat(amount),
+        description: description.trim(),
+        amount: parsedAmount,
         type,
         category,
       });
@@ -143,8 +145,8 @@ const TransactionForm: React.FC<TransactionFormProps> = ({
       onAddTransaction({
         date,
         recipient: recipient.trim(),
-        description,
-        amount: parseFloat(amount),
+        description: description.trim(),
+        amount: parsedAmount,
         type,
         category,
       });
@@ -307,11 +309,20 @@ const TransactionForm: React.FC<TransactionFormProps> = ({
         </div>
 
         <div>
-          <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Nominal Transaksi (Rp)</label>
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+              Nominal Transaksi (Rp)
+            </label>
+            {amount && parseNominal(amount) > 0 && (
+              <span className="text-[11px] font-mono font-bold text-cyan-300 bg-cyan-950/80 px-2 py-0.5 rounded-md border border-cyan-500/30">
+                {formatRupiah(parseNominal(amount))}
+              </span>
+            )}
+          </div>
           <input
-            type="number"
+            type="text"
+            inputMode="numeric"
             required
-            min="0"
             placeholder="0"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}

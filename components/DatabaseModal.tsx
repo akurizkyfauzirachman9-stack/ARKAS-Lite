@@ -1,5 +1,5 @@
-import React, { useRef, useState } from 'react';
-import { Transaction, SchoolSettings, SupabaseConfig } from '../types';
+import React, { useRef, useState, useEffect } from 'react';
+import { Transaction, SchoolSettings, SupabaseConfig, BudgetSettings, MonthlySignature } from '../types';
 import { 
   testSupabaseConnection, 
   pullTransactionsFromSupabase, 
@@ -12,9 +12,20 @@ interface DatabaseModalProps {
   isOpen: boolean;
   onClose: () => void;
   transactions: Transaction[];
-  onImport: (data: Transaction[]) => void;
+  onImport: (
+    data: Transaction[], 
+    extraData?: {
+      schoolSettings?: SchoolSettings;
+      budgetSettings?: BudgetSettings;
+      activitySignatures?: Record<string, MonthlySignature>;
+      officialSignatures?: Record<string, string>;
+      reportDate?: string;
+    }
+  ) => void;
   schoolSettings: SchoolSettings;
   onUpdateSchoolSettings: (settings: SchoolSettings) => void;
+  budgetSettings?: BudgetSettings;
+  onUpdateBudgetSettings?: (settings: BudgetSettings) => void;
   supabaseConfig: SupabaseConfig;
   onUpdateSupabaseConfig: (config: SupabaseConfig) => void;
   onShowToast: (msg: string, type?: 'success' | 'error' | 'info') => void;
@@ -29,6 +40,8 @@ const DatabaseModal: React.FC<DatabaseModalProps> = ({
   onImport,
   schoolSettings,
   onUpdateSchoolSettings,
+  budgetSettings,
+  onUpdateBudgetSettings,
   supabaseConfig,
   onUpdateSupabaseConfig,
   onShowToast,
@@ -49,17 +62,71 @@ const DatabaseModal: React.FC<DatabaseModalProps> = ({
   const [showPasteBox, setShowPasteBox] = useState(false);
   const [pasteText, setPasteText] = useState('');
 
+  // Sinkronisasi otomatis saat modal dibuka untuk menjamin data selalu mutakhir
+  useEffect(() => {
+    if (isOpen) {
+      setLocalSettings(schoolSettings);
+      setLocalSupabase(supabaseConfig);
+      setErrorMsg(null);
+    }
+  }, [isOpen, schoolSettings, supabaseConfig]);
+
   if (!isOpen) return null;
 
-  // 1. Simpan Database (Download JSON)
-  const handleExportJSON = () => {
-    const backupPayload = {
-      version: '2.0',
+  // Helper untuk membaca bukti tanda tangan digital & pagu secara aman dari penyimpanan lokal
+  const getFullBackupPayload = () => {
+    let activitySigs: Record<string, MonthlySignature> = {};
+    let officialSigs: Record<string, string> = {};
+    let repDate = '10 September 2026';
+
+    try {
+      const savedAct = localStorage.getItem('arkas_activity_signatures') || localStorage.getItem('arkas_monthly_signatures');
+      if (savedAct) activitySigs = JSON.parse(savedAct);
+    } catch (e) {
+      console.error('Gagal membaca tanda tangan kegiatan:', e);
+    }
+
+    try {
+      const savedOff = localStorage.getItem('arkas_official_signatures');
+      if (savedOff) officialSigs = JSON.parse(savedOff);
+    } catch (e) {
+      console.error('Gagal membaca tanda tangan pejabat:', e);
+    }
+
+    try {
+      const savedDate = localStorage.getItem('arkas_report_date');
+      if (savedDate) repDate = savedDate;
+    } catch (e) {
+      console.error('Gagal membaca tanggal penetapan:', e);
+    }
+
+    const currentBudget: BudgetSettings = budgetSettings || (() => {
+      try {
+        const b = localStorage.getItem('arkas_budget_settings');
+        return b ? JSON.parse(b) : { phase1Budget: 60000000, phase2Budget: 60000000 };
+      } catch {
+        return { phase1Budget: 60000000, phase2Budget: 60000000 };
+      }
+    })();
+
+    return {
+      version: '2.1',
+      appName: 'ARKAS Lite BKU',
       exportedAt: new Date().toISOString(),
       schoolSettings: localSettings,
+      budgetSettings: currentBudget,
+      activitySignatures: activitySigs,
+      officialSignatures: officialSigs,
+      reportDate: repDate,
+      supabaseConfig: localSupabase,
       transactionsCount: transactions.length,
       transactions,
     };
+  };
+
+  // 1. Simpan Database (Download JSON Snapshot Utuh)
+  const handleExportJSON = () => {
+    const backupPayload = getFullBackupPayload();
     const dataStr = JSON.stringify(backupPayload, null, 2);
     const blob = new Blob([dataStr], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -70,40 +137,95 @@ const DatabaseModal: React.FC<DatabaseModalProps> = ({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    onShowToast('File cadangan database berhasil diunduh!', 'success');
+    onShowToast('Cadangan lengkap (transaksi, profil sekolah, pagu anggaran & bukti tanda tangan) berhasil diunduh!', 'success');
   };
 
   // Salin Kode Data ke Clipboard untuk dikirim via WA / Catatan ke HP
   const handleCopyJSONToClipboard = () => {
-    const backupPayload = {
-      version: '2.0',
-      exportedAt: new Date().toISOString(),
-      schoolSettings: localSettings,
-      transactionsCount: transactions.length,
-      transactions,
-    };
+    const backupPayload = getFullBackupPayload();
     const dataStr = JSON.stringify(backupPayload);
     navigator.clipboard.writeText(dataStr).then(() => {
-      onShowToast('Kode data berhasil disalin! Silakan kirimkan (paste) via WhatsApp atau pesan ke HP Anda.', 'success');
+      onShowToast('Seluruh data (transaksi, profil, pagu, tanda tangan) berhasil disalin! Silakan kirimkan (paste) via WhatsApp ke HP.', 'success');
     }).catch(() => {
       onShowToast('Gagal menyalin teks secara otomatis. Silakan gunakan tombol unduh file.', 'error');
     });
   };
 
-  // Helper pemrosesan impor data (baik dari file maupun teks paste)
+  // Helper pemrosesan impor data menyeluruh (transaksi, profil, pagu, dan tanda tangan digital)
   const processImportData = (parsedData: any) => {
     let incomingTransactions: Transaction[] = [];
+    const restoredItems: string[] = [];
 
     if (Array.isArray(parsedData)) {
       incomingTransactions = parsedData;
+      restoredItems.push(`${parsedData.length} Transaksi`);
     } else if (parsedData && Array.isArray(parsedData.transactions)) {
       incomingTransactions = parsedData.transactions;
-      if (parsedData.schoolSettings) {
+      restoredItems.push(`${parsedData.transactions.length} Transaksi`);
+
+      // 1. Pulihkan Profil Sekolah
+      if (parsedData.schoolSettings && typeof parsedData.schoolSettings === 'object') {
         setLocalSettings(parsedData.schoolSettings);
         onUpdateSchoolSettings(parsedData.schoolSettings);
+        try {
+          localStorage.setItem('arkas_school_settings', JSON.stringify(parsedData.schoolSettings));
+        } catch (e) {
+          console.error(e);
+        }
+        restoredItems.push('Profil Sekolah');
+      }
+
+      // 2. Pulihkan Pagu Anggaran BOS (Tahap 1 & 2)
+      if (parsedData.budgetSettings && typeof parsedData.budgetSettings === 'object') {
+        if (onUpdateBudgetSettings) {
+          onUpdateBudgetSettings(parsedData.budgetSettings);
+        }
+        try {
+          localStorage.setItem('arkas_budget_settings', JSON.stringify(parsedData.budgetSettings));
+        } catch (e) {
+          console.error(e);
+        }
+        restoredItems.push('Pagu Anggaran BOS');
+      }
+
+      // 3. Pulihkan Tanda Tangan Kegiatan / Kuitansi
+      const incomingActSigs = parsedData.activitySignatures || parsedData.monthlySignatures;
+      if (incomingActSigs && typeof incomingActSigs === 'object' && Object.keys(incomingActSigs).length > 0) {
+        try {
+          localStorage.setItem('arkas_activity_signatures', JSON.stringify(incomingActSigs));
+          localStorage.setItem('arkas_monthly_signatures', JSON.stringify(incomingActSigs));
+        } catch (e) {
+          console.error(e);
+        }
+        restoredItems.push(`${Object.keys(incomingActSigs).length} Tanda Tangan Kegiatan`);
+      }
+
+      // 4. Pulihkan Tanda Tangan Pejabat BOSP (Kepala Sekolah, Bendahara, Komite)
+      if (parsedData.officialSignatures && typeof parsedData.officialSignatures === 'object' && Object.keys(parsedData.officialSignatures).length > 0) {
+        try {
+          localStorage.setItem('arkas_official_signatures', JSON.stringify(parsedData.officialSignatures));
+        } catch (e) {
+          console.error(e);
+        }
+        restoredItems.push('Tanda Tangan Pejabat');
+      }
+
+      // 5. Pulihkan Tanggal Pengesahan Laporan
+      if (parsedData.reportDate && typeof parsedData.reportDate === 'string') {
+        try {
+          localStorage.setItem('arkas_report_date', parsedData.reportDate);
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
+      // 6. Pulihkan Konfigurasi Cloud jika tersedia
+      if (parsedData.supabaseConfig && parsedData.supabaseConfig.url) {
+        setLocalSupabase(parsedData.supabaseConfig);
+        onUpdateSupabaseConfig(parsedData.supabaseConfig);
       }
     } else {
-      throw new Error('Format file tidak valid. Format harus berupa array transaksi atau objek backup ARKAS.');
+      throw new Error('Format file tidak valid. Format harus berupa array transaksi atau objek cadangan ARKAS yang valid.');
     }
 
     // Mekanisme ON CONFLICT (id) DO UPDATE & unique_bku_entry (date, description, amount)
@@ -115,24 +237,26 @@ const DatabaseModal: React.FC<DatabaseModalProps> = ({
 
     incomingTransactions.forEach(item => {
       if (!item.id) item.id = Date.now().toString() + Math.random().toString(36).substring(2, 7);
+      const itemDesc = (item.description || '').trim().toLowerCase();
+      const itemAmount = Number(item.amount) || 0;
       
       if (existingMap.has(item.id)) {
-        existingMap.set(item.id, item);
+        existingMap.set(item.id, { ...item, amount: itemAmount });
         updatedCount++;
       } else {
         // Check unique_bku_entry constraint (date, description, amount)
         const duplicate = Array.from(existingMap.values()).find(
           existing => existing.date === item.date && 
-                      existing.description.trim().toLowerCase() === item.description.trim().toLowerCase() && 
-                      existing.amount === item.amount
+                      (existing.description || '').trim().toLowerCase() === itemDesc && 
+                      existing.amount === itemAmount
         );
 
         if (duplicate) {
           // Merge/update duplicate
-          existingMap.set(duplicate.id, { ...duplicate, ...item, id: duplicate.id });
+          existingMap.set(duplicate.id, { ...duplicate, ...item, id: duplicate.id, amount: itemAmount });
           updatedCount++;
         } else {
-          existingMap.set(item.id, item);
+          existingMap.set(item.id, { ...item, amount: itemAmount });
           insertedCount++;
         }
       }
@@ -142,8 +266,20 @@ const DatabaseModal: React.FC<DatabaseModalProps> = ({
       (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
     );
 
-    onImport(mergedList);
-    onShowToast(`Pemulihan berhasil: ${insertedCount} baru, ${updatedCount} diperbarui (ON CONFLICT).`, 'success');
+    const incomingActSigs = parsedData && typeof parsedData === 'object' 
+      ? (parsedData.activitySignatures || parsedData.monthlySignatures) 
+      : undefined;
+
+    onImport(mergedList, {
+      schoolSettings: parsedData?.schoolSettings,
+      budgetSettings: parsedData?.budgetSettings,
+      activitySignatures: incomingActSigs,
+      officialSignatures: parsedData?.officialSignatures,
+      reportDate: parsedData?.reportDate,
+    });
+
+    const detailSummary = restoredItems.length > 0 ? ` (${restoredItems.join(', ')})` : '';
+    onShowToast(`Pemulihan berhasil: ${insertedCount} baru, ${updatedCount} diperbarui${detailSummary}.`, 'success');
     onClose();
   };
 
@@ -368,7 +504,7 @@ const DatabaseModal: React.FC<DatabaseModalProps> = ({
                   <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
                 </svg>
                 <div className="text-xs text-slate-300 leading-relaxed">
-                  <span className="font-bold text-cyan-300">Mekanisme Ketahanan Data:</span> Cadangan mencakup seluruh Buku Kas Umum dan metadata identitas sekolah. Proses impor menerapkan prinsip <strong>ON CONFLICT DO UPDATE</strong> dan constraint entri ganda untuk menjamin integritas transaksi.
+                  <span className="font-bold text-cyan-300">Cadangan Lengkap (Full Snapshot):</span> Cadangan mencakup <strong>seluruh Buku Kas Umum, Profil Sekolah, Pagu Anggaran BOS (Tahap 1 & 2), serta Bukti Tanda Tangan Digital</strong> (kuitansi & pejabat). Proses impor menerapkan prinsip <strong>ON CONFLICT DO UPDATE</strong> untuk mencegah duplikasi data.
                 </div>
               </div>
 
@@ -376,16 +512,24 @@ const DatabaseModal: React.FC<DatabaseModalProps> = ({
                 {/* Export */}
                 <button 
                   onClick={handleExportJSON}
-                  className="flex flex-col items-center justify-center p-6 rounded-2xl border border-slate-700 bg-[#151C28]/80 hover:bg-[#1C2638] hover:border-emerald-500/50 transition-all text-center group cursor-pointer"
+                  className="flex flex-col items-center justify-center p-5 rounded-2xl border border-slate-700 bg-[#151C28]/80 hover:bg-[#1C2638] hover:border-emerald-500/50 transition-all text-center group cursor-pointer"
                 >
                   <div className="w-12 h-12 bg-emerald-500/15 border border-emerald-500/30 rounded-2xl flex items-center justify-center text-[#00E6A7] mb-3 group-hover:scale-110 transition-transform">
                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
                   </div>
                   <h4 className="font-bold text-white text-sm">Simpan Cadangan (Export)</h4>
-                  <p className="text-xs text-slate-400 mt-1">Unduh seluruh data BKU dalam format JSON standar</p>
-                  <span className="mt-3 text-[11px] bg-[#0B111B] text-cyan-300 border border-slate-700 px-3 py-1 rounded-xl font-mono font-medium">
-                    {transactions.length} Transaksi Tersimpan
-                  </span>
+                  <p className="text-xs text-slate-400 mt-1">Unduh seluruh data BKU, profil, pagu, & tanda tangan ke file JSON</p>
+                  <div className="mt-3 flex flex-wrap items-center justify-center gap-1.5 text-[10px]">
+                    <span className="bg-[#0B111B] text-cyan-300 border border-slate-700 px-2 py-0.5 rounded-lg font-mono font-medium">
+                      {transactions.length} Transaksi
+                    </span>
+                    <span className="bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-lg font-medium">
+                      Profil & Pagu BOS
+                    </span>
+                    <span className="bg-purple-500/10 text-purple-300 border border-purple-500/30 px-2 py-0.5 rounded-lg font-medium">
+                      Tanda Tangan Digital
+                    </span>
+                  </div>
                 </button>
 
                 {/* Import */}
@@ -399,16 +543,21 @@ const DatabaseModal: React.FC<DatabaseModalProps> = ({
                   />
                   <button 
                     onClick={handleImportClick}
-                    className="w-full h-full flex flex-col items-center justify-center p-6 rounded-2xl border-2 border-dashed border-slate-700 bg-[#151C28]/80 hover:bg-[#1C2638] hover:border-cyan-500/50 transition-all text-center group cursor-pointer"
+                    className="w-full h-full flex flex-col items-center justify-center p-5 rounded-2xl border-2 border-dashed border-slate-700 bg-[#151C28]/80 hover:bg-[#1C2638] hover:border-cyan-500/50 transition-all text-center group cursor-pointer"
                   >
                     <div className="w-12 h-12 bg-cyan-500/15 border border-cyan-500/30 rounded-2xl flex items-center justify-center text-cyan-400 mb-3 group-hover:scale-110 transition-transform">
                       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
                     </div>
                     <h4 className="font-bold text-white text-sm">Pulihkan Data (Import)</h4>
-                    <p className="text-xs text-slate-400 mt-1">Unggah file cadangan JSON sebelumnya</p>
-                    <span className="mt-3 text-[11px] bg-cyan-500/10 text-cyan-300 border border-cyan-500/30 px-3 py-1 rounded-xl font-medium">
-                      Bulk Upsert (Anti Duplikasi)
-                    </span>
+                    <p className="text-xs text-slate-400 mt-1">Unggah file cadangan JSON dari perangkat mana pun</p>
+                    <div className="mt-3 flex flex-wrap items-center justify-center gap-1.5 text-[10px]">
+                      <span className="bg-cyan-500/10 text-cyan-300 border border-cyan-500/30 px-2 py-0.5 rounded-lg font-medium">
+                        Bulk Upsert (Anti Duplikasi)
+                      </span>
+                      <span className="bg-teal-500/10 text-teal-300 border border-teal-500/30 px-2 py-0.5 rounded-lg font-medium">
+                        Pulihkan Lengkap
+                      </span>
+                    </div>
                   </button>
                 </div>
               </div>

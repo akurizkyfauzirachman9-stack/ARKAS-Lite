@@ -9,6 +9,8 @@ export interface Transaction {
   amount: number;
   type: TransactionType;
   category: string;
+  source?: string; // Sumber Dana BOS (BOS Reguler, dsb.)
+  notes?: string; // Catatan Tambahan
 }
 
 export const INCOME_CATEGORIES = [
@@ -48,13 +50,6 @@ export const CATEGORY_COLORS: Record<string, string> = {
   'Dana Komite': '#EC4899',
   'Lain-lain': '#64748B'
 };
-
-export interface Grade {
-  letter: string;
-  predicate: string;
-  color: string;
-  textColor: string;
-}
 
 export type UserRole = 'treasurer' | 'headmaster' | 'committee';
 

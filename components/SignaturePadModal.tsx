@@ -23,11 +23,13 @@ const SignaturePadModal: React.FC<SignaturePadModalProps> = ({
   const [name, setName] = useState(initialRecipientName || '');
   const [penColor, setPenColor] = useState('#1e3a8a'); // Biru formal khas tanda tangan berkas dinas
   const [penWidth, setPenWidth] = useState(2.5);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (isOpen) {
       setName(initialRecipientName || '');
       setHasDrawn(!!initialSignature);
+      setErrorMessage(null);
       setTimeout(() => {
         initCanvas();
       }, 50);
@@ -124,13 +126,14 @@ const SignaturePadModal: React.FC<SignaturePadModalProps> = ({
     const rect = canvas.getBoundingClientRect();
     ctx.clearRect(0, 0, rect.width, rect.height);
     setHasDrawn(false);
+    setErrorMessage(null);
   };
 
   const handleSave = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     if (!hasDrawn) {
-      alert('Silakan goreskan tanda tangan pada area yang disediakan.');
+      setErrorMessage('Silakan goreskan tanda tangan pada area kanvas di bawah sebelum menyimpan.');
       return;
     }
 
@@ -165,6 +168,23 @@ const SignaturePadModal: React.FC<SignaturePadModalProps> = ({
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </div>
+
+        {/* Notifikasi Peringatan In-App */}
+        {errorMessage && (
+          <div className="mx-5 mt-4 p-2.5 bg-amber-950/80 border border-amber-500/40 rounded-xl text-xs text-amber-200 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+              <span>{errorMessage}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setErrorMessage(null)}
+              className="text-amber-400 hover:text-white font-bold ml-2 cursor-pointer"
+            >
+              &times;
+            </button>
+          </div>
+        )}
 
         {/* Body */}
         <div className="p-5 space-y-4">

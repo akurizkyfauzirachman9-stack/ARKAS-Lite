@@ -22,11 +22,13 @@ const ReceiptModal: React.FC<ReceiptModalProps> = ({
   const [isSavingJpg, setIsSavingJpg] = useState(false);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [isPrinting, setIsPrinting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   if (!isOpen || !transaction) return null;
 
   // 1. Fungsi Cetak Langsung ke Printer Fisik
   const handlePrint = () => {
+    setErrorMessage(null);
     const paperElement = document.getElementById('receipt-paper');
     if (!paperElement) {
       window.print();
@@ -60,7 +62,6 @@ const ReceiptModal: React.FC<ReceiptModalProps> = ({
             <meta charset="UTF-8" />
             <title>Kwitansi_BOSP_${transaction.id}</title>
             <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-            <script src="https://cdn.tailwindcss.com"></script>
             ${activeStyles}
             <style>
               @page {
@@ -122,6 +123,7 @@ const ReceiptModal: React.FC<ReceiptModalProps> = ({
 
   // 2. Fungsi Ekspor File PDF Asli (.pdf)
   const handleExportPdf = async () => {
+    setErrorMessage(null);
     setIsExportingPdf(true);
     try {
       const element = document.getElementById('receipt-paper');
@@ -168,7 +170,7 @@ const ReceiptModal: React.FC<ReceiptModalProps> = ({
       pdf.save(`Kwitansi-BOSP-${transaction.id}-${safeRecipient}.pdf`);
     } catch (error) {
       console.error("Gagal membuat PDF kwitansi:", error);
-      alert("Gagal membuat file PDF kwitansi. Silakan coba lagi.");
+      setErrorMessage("Gagal membuat file PDF kwitansi. Silakan coba lagi atau gunakan tombol Cetak.");
     } finally {
       setIsExportingPdf(false);
     }
@@ -176,6 +178,7 @@ const ReceiptModal: React.FC<ReceiptModalProps> = ({
 
   // 3. Fungsi Simpan Gambar JPG (.jpg)
   const handleSaveImage = async () => {
+    setErrorMessage(null);
     setIsSavingJpg(true);
     try {
       const element = document.getElementById('receipt-paper');
@@ -214,18 +217,25 @@ const ReceiptModal: React.FC<ReceiptModalProps> = ({
       }
     } catch (error) {
       console.error("Gagal menyimpan gambar:", error);
-      alert("Gagal menyimpan gambar kwitansi. Silakan coba lagi.");
+      setErrorMessage("Gagal menyimpan gambar kwitansi. Silakan coba lagi.");
     } finally {
       setIsSavingJpg(false);
     }
   };
 
   const terbilangText = terbilang(transaction.amount) + " Rupiah";
-  const formattedDate = new Date(transaction.date).toLocaleDateString('id-ID', { 
-    year: 'numeric', 
-    month: 'long', 
-    day: 'numeric' 
-  });
+  const formattedDate = (() => {
+    try {
+      const parts = (transaction.date || '').split('-');
+      if (parts.length === 3) {
+        const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+        return d.toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' });
+      }
+      return new Date(transaction.date).toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' });
+    } catch {
+      return transaction.date;
+    }
+  })();
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center p-2 sm:p-4 bg-black/70 backdrop-blur-sm print:static print:p-0 print:bg-white print:z-auto">
@@ -364,6 +374,23 @@ const ReceiptModal: React.FC<ReceiptModalProps> = ({
                 </button>
             </div>
         </div>
+
+        {/* Notifikasi Error In-App jika Ekspor Gagal */}
+        {errorMessage && (
+          <div className="mx-4 mt-3 p-3 bg-rose-950/80 border border-rose-500/40 rounded-xl text-xs text-rose-200 flex items-center justify-between no-print">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-rose-400"></span>
+              <span>{errorMessage}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setErrorMessage(null)}
+              className="text-rose-400 hover:text-white font-bold ml-2 cursor-pointer"
+            >
+              &times;
+            </button>
+          </div>
+        )}
 
         {/* Area Preview Lembar Kertas Kwitansi */}
         <div className="p-3 sm:p-6 md:p-8 bg-[#080B12] flex justify-center items-start overflow-x-auto min-h-[500px] print:p-0 print:bg-white print:block">

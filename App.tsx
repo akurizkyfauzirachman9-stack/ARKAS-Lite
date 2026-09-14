@@ -423,10 +423,36 @@ const App: React.FC = () => {
   };
 
   // Handler Import Database
-  const handleImportDatabase = (importedData: Transaction[]) => {
+  const handleImportDatabase = (
+    importedData: Transaction[],
+    extraData?: {
+      schoolSettings?: SchoolSettings;
+      budgetSettings?: BudgetSettings;
+      activitySignatures?: Record<string, MonthlySignature>;
+      officialSignatures?: Record<string, string>;
+      reportDate?: string;
+    }
+  ) => {
     setTransactions(importedData);
+    if (extraData?.schoolSettings) {
+      setSchoolSettings(extraData.schoolSettings);
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(extraData.schoolSettings));
+    }
+    if (extraData?.budgetSettings) {
+      setBudgetSettings(extraData.budgetSettings);
+      localStorage.setItem(BUDGET_KEY, JSON.stringify(extraData.budgetSettings));
+    }
+    if (extraData?.activitySignatures) {
+      localStorage.setItem('arkas_activity_signatures', JSON.stringify(extraData.activitySignatures));
+      localStorage.setItem('arkas_monthly_signatures', JSON.stringify(extraData.activitySignatures));
+    }
+    if (extraData?.officialSignatures) {
+      localStorage.setItem('arkas_official_signatures', JSON.stringify(extraData.officialSignatures));
+    }
+    if (extraData?.reportDate) {
+      localStorage.setItem('arkas_report_date', extraData.reportDate);
+    }
     setIsDatabaseModalOpen(false);
-    showToast('Database berhasil dipulihkan!', 'success');
   };
 
   const handleExportCSV = (customTransactions?: Transaction[], customLabel?: string) => {
@@ -449,7 +475,8 @@ const App: React.FC = () => {
     ].join('\n');
 
     const label = customLabel ? `_${customLabel.replace(/\s+/g, '_')}` : '';
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    // Tambahkan \uFEFF (UTF-8 BOM) agar Microsoft Excel membaca karakter Indonesia dan encoding dengan benar
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
@@ -466,14 +493,23 @@ const App: React.FC = () => {
   // Tahap 2: Bulan 7-12 (Juli - Desember)
   // All: Seluruh tahun
   const phaseTransactions = useMemo(() => {
-    if (selectedPhase === 'all') return transactions;
     return transactions.filter(t => {
-      const month = parseInt(t.date.split('-')[1], 10);
+      const parts = (t.date || '').split('-');
+      if (parts.length < 2) return selectedPhase === 'all';
+      
+      const tYear = parts[0];
+      const month = parseInt(parts[1], 10);
+
+      // Jika tahun buku disetel, pastikan transaksi sesuai dengan tahun anggaran aktif
+      if (schoolSettings.fiscalYear && tYear && tYear !== schoolSettings.fiscalYear) {
+        return false;
+      }
+
       if (selectedPhase === 'phase1') return month >= 1 && month <= 6;
       if (selectedPhase === 'phase2') return month >= 7 && month <= 12;
       return true;
     });
-  }, [transactions, selectedPhase]);
+  }, [transactions, selectedPhase, schoolSettings.fiscalYear]);
 
   // Pagu untuk tahap yang aktif
   const phaseBudget = useMemo(() => {
@@ -530,7 +566,19 @@ const App: React.FC = () => {
 
   const handleOpenReceipt = (tx: Transaction, sig?: MonthlySignature) => {
     setCurrentReceiptData(tx);
-    setCurrentReceiptSignature(sig || null);
+    let signatureToUse = sig || null;
+    if (!signatureToUse) {
+      try {
+        const saved = localStorage.getItem('arkas_activity_signatures') || localStorage.getItem('arkas_monthly_signatures');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed[tx.id]) signatureToUse = parsed[tx.id];
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    setCurrentReceiptSignature(signatureToUse);
     setIsReceiptModalOpen(true);
   };
 
@@ -806,6 +854,8 @@ const App: React.FC = () => {
         onImport={handleImportDatabase}
         schoolSettings={schoolSettings}
         onUpdateSchoolSettings={setSchoolSettings}
+        budgetSettings={budgetSettings}
+        onUpdateBudgetSettings={setBudgetSettings}
         supabaseConfig={supabaseConfig}
         onUpdateSupabaseConfig={setSupabaseConfig}
         onShowToast={showToast}

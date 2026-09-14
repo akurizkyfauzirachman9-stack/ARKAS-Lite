@@ -66,9 +66,9 @@ const ExpenseChart: React.FC<ExpenseChartProps> = ({ expenseByCategory, totalExp
                 strokeWidth={strokeWidth}
               />
             ) : (
-              segments.map((segment, index) => (
+              segments.map((segment) => (
                 <circle
-                  key={index}
+                  key={segment.category}
                   cx={center}
                   cy={center}
                   r={radius}
@@ -90,11 +90,13 @@ const ExpenseChart: React.FC<ExpenseChartProps> = ({ expenseByCategory, totalExp
           <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-center px-2">
              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mb-0.5">Total Realisasi</span>
              <span className="text-xl font-extrabold text-white font-mono tracking-tight">
-               {totalExpense >= 1000000000 
-                  ? `${(totalExpense / 1000000000).toFixed(2)}M` 
-                  : (totalExpense >= 1000000 
-                      ? `${(totalExpense / 1000000).toFixed(1)}jt` 
-                      : (totalExpense > 0 ? (totalExpense / 1000).toFixed(0) + 'k' : '0'))
+               {totalExpense >= 1000000000000
+                  ? `${(totalExpense / 1000000000000).toFixed(2)}T`
+                  : totalExpense >= 1000000000 
+                    ? `${(totalExpense / 1000000000).toFixed(2)}M` 
+                    : (totalExpense >= 1000000 
+                        ? `${(totalExpense / 1000000).toFixed(1)}jt` 
+                        : (totalExpense > 0 ? (totalExpense / 1000).toFixed(0) + 'k' : '0'))
                }
              </span>
              {totalExpense > 0 && (

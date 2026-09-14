@@ -118,6 +118,22 @@ const BalanceSheetModal: React.FC<BalanceSheetModalProps> = ({
     });
   }, [schoolSettings, reportDate]);
 
+  // Sinkronisasi data tanda tangan & tanggal saat modal dibuka (memastikan data hasil impor langsung aktif)
+  useEffect(() => {
+    if (isOpen) {
+      try {
+        const savedAct = localStorage.getItem('arkas_activity_signatures') || localStorage.getItem(SIGNATURES_STORAGE_KEY);
+        if (savedAct) setActivitySignatures(JSON.parse(savedAct));
+        const savedOff = localStorage.getItem('arkas_official_signatures');
+        if (savedOff) setOfficialSignatures(JSON.parse(savedOff));
+        const savedDate = localStorage.getItem('arkas_report_date');
+        if (savedDate) setReportDate(savedDate);
+      } catch (e) {
+        console.error('Failed to sync signatures from localStorage', e);
+      }
+    }
+  }, [isOpen]);
+
   // State untuk modal tanda tangan touchscreen aktif
   const [activeSignModal, setActiveSignModal] = useState<{
     id: string; // transaction id or official key
@@ -363,7 +379,7 @@ const BalanceSheetModal: React.FC<BalanceSheetModalProps> = ({
     try {
       const element = document.getElementById('balance-sheet-printable');
       if (!element) {
-        alert("Elemen laporan tidak ditemukan.");
+        if (onShowToast) onShowToast("Elemen laporan tidak ditemukan.", "error");
         return;
       }
 
@@ -425,7 +441,9 @@ const BalanceSheetModal: React.FC<BalanceSheetModalProps> = ({
       pdf.save(`Laporan-SPJ-BOSP-${schoolSettings.fiscalYear}-${schoolSettings.schoolName.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`);
     } catch (err) {
       console.error("Gagal mengekspor PDF laporan:", err);
-      alert("Gagal membuat file PDF laporan. Silakan coba lagi.");
+      if (onShowToast) {
+        onShowToast("Gagal membuat file PDF laporan. Silakan coba gunakan tombol Cetak Langsung.", "error");
+      }
     } finally {
       setIsExportingPdf(false);
     }

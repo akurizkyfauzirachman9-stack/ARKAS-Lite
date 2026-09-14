@@ -136,7 +136,7 @@ export const pushTransactionsToSupabase = async (
     type: t.type,
     category: t.category,
     description: t.description,
-    amount: Math.max(0.01, Number(t.amount) || 1),
+    amount: Number.isFinite(Number(t.amount)) ? Math.max(0, Number(t.amount)) : 0,
     fund_source: t.source || 'BOS Reguler',
     notes: t.notes || null,
     updated_at: new Date().toISOString(),

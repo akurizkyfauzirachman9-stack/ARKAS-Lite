@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { BudgetSettings } from '../types';
-import { formatRupiah } from '../utils';
+import { formatRupiah, parseNominal } from '../utils';
 
 interface BudgetModalProps {
   isOpen: boolean;
@@ -17,27 +17,29 @@ const BudgetModal: React.FC<BudgetModalProps> = ({
   onSave,
   userRole = 'treasurer'
 }) => {
-  const [phase1, setPhase1] = useState<number>(budgetSettings.phase1Budget || 0);
-  const [phase2, setPhase2] = useState<number>(budgetSettings.phase2Budget || 0);
+  const [phase1, setPhase1] = useState<string>(String(budgetSettings.phase1Budget || 0));
+  const [phase2, setPhase2] = useState<string>(String(budgetSettings.phase2Budget || 0));
 
   useEffect(() => {
     if (isOpen) {
-      setPhase1(budgetSettings.phase1Budget || 0);
-      setPhase2(budgetSettings.phase2Budget || 0);
+      setPhase1(String(budgetSettings.phase1Budget || 0));
+      setPhase2(String(budgetSettings.phase2Budget || 0));
     }
   }, [isOpen, budgetSettings]);
 
   if (!isOpen) return null;
 
-  const totalAnnualBudget = Number(phase1 || 0) + Number(phase2 || 0);
+  const numPhase1 = parseNominal(phase1);
+  const numPhase2 = parseNominal(phase2);
+  const totalAnnualBudget = numPhase1 + numPhase2;
   const isReadOnly = userRole !== 'treasurer';
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (isReadOnly) return;
     onSave({
-      phase1Budget: Math.max(0, Number(phase1) || 0),
-      phase2Budget: Math.max(0, Number(phase2) || 0),
+      phase1Budget: Math.max(0, numPhase1),
+      phase2Budget: Math.max(0, numPhase2),
     });
     onClose();
   };
@@ -94,19 +96,18 @@ const BudgetModal: React.FC<BudgetModalProps> = ({
                 Pagu BOS Tahap 1 (Januari - Juni)
               </label>
               <span className="text-xs font-mono font-bold text-cyan-300 bg-cyan-500/10 px-2.5 py-0.5 rounded-lg border border-cyan-500/30">
-                {formatRupiah(phase1)}
+                {formatRupiah(numPhase1)}
               </span>
             </div>
             <div className="relative">
               <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-bold text-slate-500 text-sm font-mono">Rp</span>
               <input
-                type="number"
-                min="0"
-                step="100000"
+                type="text"
+                inputMode="numeric"
                 disabled={isReadOnly}
-                value={phase1 || ''}
-                onChange={(e) => setPhase1(Number(e.target.value) || 0)}
-                placeholder="Contoh: 60000000"
+                value={phase1}
+                onChange={(e) => setPhase1(e.target.value)}
+                placeholder="Contoh: 60000000 atau 60.000.000"
                 className="w-full pl-11 pr-4 py-2.5 bg-[#0B111B] border border-slate-700 rounded-xl text-white font-mono text-sm focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 outline-none transition disabled:opacity-50 disabled:bg-slate-900"
               />
             </div>
@@ -118,7 +119,7 @@ const BudgetModal: React.FC<BudgetModalProps> = ({
                   <button
                     key={val}
                     type="button"
-                    onClick={() => setPhase1(val)}
+                    onClick={() => setPhase1(String(val))}
                     className="px-2.5 py-1 text-[10px] font-medium bg-[#151C28] hover:bg-[#1C2638] text-slate-300 rounded-lg border border-slate-700 transition-colors cursor-pointer"
                   >
                     {val / 1000000} Jt
@@ -136,19 +137,18 @@ const BudgetModal: React.FC<BudgetModalProps> = ({
                 Pagu BOS Tahap 2 (Juli - Desember)
               </label>
               <span className="text-xs font-mono font-bold text-teal-300 bg-teal-500/10 px-2.5 py-0.5 rounded-lg border border-teal-500/30">
-                {formatRupiah(phase2)}
+                {formatRupiah(numPhase2)}
               </span>
             </div>
             <div className="relative">
               <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-bold text-slate-500 text-sm font-mono">Rp</span>
               <input
-                type="number"
-                min="0"
-                step="100000"
+                type="text"
+                inputMode="numeric"
                 disabled={isReadOnly}
-                value={phase2 || ''}
-                onChange={(e) => setPhase2(Number(e.target.value) || 0)}
-                placeholder="Contoh: 60000000"
+                value={phase2}
+                onChange={(e) => setPhase2(e.target.value)}
+                placeholder="Contoh: 60000000 atau 60.000.000"
                 className="w-full pl-11 pr-4 py-2.5 bg-[#0B111B] border border-slate-700 rounded-xl text-white font-mono text-sm focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400 outline-none transition disabled:opacity-50 disabled:bg-slate-900"
               />
             </div>
@@ -166,7 +166,7 @@ const BudgetModal: React.FC<BudgetModalProps> = ({
                   <button
                     key={val}
                     type="button"
-                    onClick={() => setPhase2(val)}
+                    onClick={() => setPhase2(String(val))}
                     className="px-2.5 py-1 text-[10px] font-medium bg-[#151C28] hover:bg-[#1C2638] text-slate-300 rounded-lg border border-slate-700 transition-colors cursor-pointer"
                   >
                     {val / 1000000} Jt

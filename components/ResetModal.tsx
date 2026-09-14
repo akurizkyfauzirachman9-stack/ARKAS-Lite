@@ -8,13 +8,11 @@ interface ResetModalProps {
 
 const ResetModal: React.FC<ResetModalProps> = ({ isOpen, onClose, onConfirm }) => {
   const [isConfirmed, setIsConfirmed] = useState(false);
-  const [confirmText, setConfirmText] = useState('');
 
   // Reset state setiap kali modal dibuka
   useEffect(() => {
     if (isOpen) {
       setIsConfirmed(false);
-      setConfirmText('');
     }
   }, [isOpen]);
 
@@ -47,9 +45,9 @@ const ResetModal: React.FC<ResetModalProps> = ({ isOpen, onClose, onConfirm }) =
           </div>
 
           {/* Checkbox Konfirmasi */}
-          <div 
-            className="flex items-start gap-3 p-3.5 border border-rose-500/30 rounded-xl bg-rose-950/20 hover:bg-rose-950/30 transition-colors cursor-pointer" 
-            onClick={() => setIsConfirmed(!isConfirmed)}
+          <label 
+            htmlFor="confirm-checkbox"
+            className="flex items-start gap-3 p-3.5 border border-rose-500/30 rounded-xl bg-rose-950/20 hover:bg-rose-950/30 transition-colors cursor-pointer select-none" 
           >
             <div className="flex items-center h-5">
               <input
@@ -61,14 +59,14 @@ const ResetModal: React.FC<ResetModalProps> = ({ isOpen, onClose, onConfirm }) =
               />
             </div>
             <div className="text-xs sm:text-sm">
-              <label htmlFor="confirm-checkbox" className="font-semibold text-rose-200 cursor-pointer select-none">
+              <span className="font-semibold text-rose-200">
                 Saya mengerti dan ingin menghapus semua data
-              </label>
+              </span>
               <p className="text-xs text-slate-400 mt-1">
                 Centang kotak ini untuk mengaktifkan tombol reset.
               </p>
             </div>
-          </div>
+          </label>
         </div>
 
         {/* Footer Buttons */}

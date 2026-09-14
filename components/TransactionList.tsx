@@ -101,7 +101,9 @@ const TransactionList: React.FC<TransactionListProps> = ({
         return dateSortOrder === 'asc' ? comp : -comp;
       }
       // Jika tanggal sama, urutkan berdasarkan waktu buat/id
-      return dateSortOrder === 'asc' ? a.id.localeCompare(b.id) : b.id.localeCompare(a.id);
+      return dateSortOrder === 'asc' 
+        ? String(a.id).localeCompare(String(b.id)) 
+        : String(b.id).localeCompare(String(a.id));
     });
   }, [transactions, searchUraian, selectedMonth, filterType, dateSortOrder]);
 
