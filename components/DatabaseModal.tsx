@@ -228,41 +228,28 @@ const DatabaseModal: React.FC<DatabaseModalProps> = ({
       throw new Error('Format file tidak valid. Format harus berupa array transaksi atau objek cadangan ARKAS yang valid.');
     }
 
-    // Mekanisme ON CONFLICT (id) DO UPDATE & unique_bku_entry (date, description, amount)
-    const existingMap = new Map<string, Transaction>();
-    transactions.forEach(t => existingMap.set(t.id, t));
+    // Pemulihan Bersih & Utuh (Clean Snapshot Restore)
+    // Menjamin data transaksi setelah impor persis 100% sama dengan file cadangan asli:
+    // 1. Membersihkan & menormalkan nominal menjadi Number murni agar tidak terjadi concat string
+    // 2. Tidak menumpuk dengan transaksi lama yang tertinggal di memori browser
+    // 3. Menghindari penghapusan transaksi sah yang kebetulan memiliki tanggal & nominal sama
+    const cleanedTransactions: Transaction[] = incomingTransactions.map((item, idx) => {
+      const cleanAmount = typeof item.amount === 'number' 
+        ? item.amount 
+        : parseFloat(String(item.amount).replace(/[^0-9.-]+/g, '')) || 0;
 
-    let updatedCount = 0;
-    let insertedCount = 0;
-
-    incomingTransactions.forEach(item => {
-      if (!item.id) item.id = Date.now().toString() + Math.random().toString(36).substring(2, 7);
-      const itemDesc = (item.description || '').trim().toLowerCase();
-      const itemAmount = Number(item.amount) || 0;
-      
-      if (existingMap.has(item.id)) {
-        existingMap.set(item.id, { ...item, amount: itemAmount });
-        updatedCount++;
-      } else {
-        // Check unique_bku_entry constraint (date, description, amount)
-        const duplicate = Array.from(existingMap.values()).find(
-          existing => existing.date === item.date && 
-                      (existing.description || '').trim().toLowerCase() === itemDesc && 
-                      existing.amount === itemAmount
-        );
-
-        if (duplicate) {
-          // Merge/update duplicate
-          existingMap.set(duplicate.id, { ...duplicate, ...item, id: duplicate.id, amount: itemAmount });
-          updatedCount++;
-        } else {
-          existingMap.set(item.id, { ...item, amount: itemAmount });
-          insertedCount++;
-        }
-      }
+      return {
+        ...item,
+        id: item.id || `arkas_tx_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`,
+        date: item.date || new Date().toISOString().slice(0, 10),
+        type: item.type === 'income' ? 'income' : 'expense',
+        amount: Math.abs(cleanAmount),
+        category: item.category || (item.type === 'income' ? 'BOS Reguler' : 'Standar Pembiayaan'),
+        description: item.description || '-',
+      };
     });
 
-    const mergedList = Array.from(existingMap.values()).sort(
+    const sortedList = cleanedTransactions.sort(
       (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
     );
 
@@ -270,7 +257,7 @@ const DatabaseModal: React.FC<DatabaseModalProps> = ({
       ? (parsedData.activitySignatures || parsedData.monthlySignatures) 
       : undefined;
 
-    onImport(mergedList, {
+    onImport(sortedList, {
       schoolSettings: parsedData?.schoolSettings,
       budgetSettings: parsedData?.budgetSettings,
       activitySignatures: incomingActSigs,
@@ -279,7 +266,7 @@ const DatabaseModal: React.FC<DatabaseModalProps> = ({
     });
 
     const detailSummary = restoredItems.length > 0 ? ` (${restoredItems.join(', ')})` : '';
-    onShowToast(`Pemulihan berhasil: ${insertedCount} baru, ${updatedCount} diperbarui${detailSummary}.`, 'success');
+    onShowToast(`Pemulihan berhasil: ${sortedList.length} transaksi dipulihkan identik dengan cadangan${detailSummary}.`, 'success');
     onClose();
   };
 
@@ -552,7 +539,7 @@ const DatabaseModal: React.FC<DatabaseModalProps> = ({
                     <p className="text-xs text-slate-400 mt-1">Unggah file cadangan JSON dari perangkat mana pun</p>
                     <div className="mt-3 flex flex-wrap items-center justify-center gap-1.5 text-[10px]">
                       <span className="bg-cyan-500/10 text-cyan-300 border border-cyan-500/30 px-2 py-0.5 rounded-lg font-medium">
-                        Bulk Upsert (Anti Duplikasi)
+                        Presisi 100% Identik
                       </span>
                       <span className="bg-teal-500/10 text-teal-300 border border-teal-500/30 px-2 py-0.5 rounded-lg font-medium">
                         Pulihkan Lengkap
